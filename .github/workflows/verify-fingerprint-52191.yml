@@ -28,7 +28,7 @@ jobs:
       - name: Install isolated Jest tools on runner only
         shell: bash
         run: |
-          npm install --prefix "$RUNNER_TEMP/fingerprint-tools" --no-audit --no-fund --ignore-scripts jest@30.5.2 memfs@3.6.0 @swc/core@1.15.18 @swc/jest@0.2.39 @swc-contrib/mut-cjs-exports@14.13.0 jest-watch-typeahead@3.0.1 chalk@4.1.2 debug@4.3.4 getenv@2.0.0 glob@13.0.0 ignore@5.3.1 minimatch@10.2.2 resolve-from@5.0.0 semver@7.7.4 @expo/spawn-async@1.8.0 @expo/env
+          npm install --prefix "$RUNNER_TEMP/fingerprint-tools" --no-audit --no-fund --ignore-scripts jest@30.5.2 memfs@3.6.0 @swc/core@1.15.18 @swc/jest@0.2.39 @swc-contrib/mut-cjs-exports@14.13.0 jest-watch-typeahead@3.0.1 chalk@4.1.2 debug@4.3.4 getenv@2.0.0 glob@13.0.0 ignore@5.3.1 minimatch@10.2.2 resolve-from@5.0.0 semver@7.7.4 @expo/spawn-async@1.8.0 @expo/env @expo/config
       - name: Use repository Jest preset without monorepo installation
         shell: bash
         run: |
@@ -105,10 +105,9 @@ jobs:
           @@ -0,0 +1 @@
           +int revision = 1;
           PATCH
-          cd app
           bun install --ignore-scripts
-          test "$(cat ../node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 1;'
-          sed -i 's/int revision = 1;/int revision = 2;/' ../native-fixes/is-number.patch
+          test "$(cat node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 1;'
+          sed -i 's/int revision = 1;/int revision = 2;/' native-fixes/is-number.patch
           bun install --force --ignore-scripts
-          test "$(cat ../node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 2;'
-          echo 'Bun 1.4.4 applied both root-declared patch revisions when invoked from app/. No app-local patch map or native build.'
+          test "$(cat node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 2;'
+          echo 'Bun 1.4.4 applied both root-declared patch revisions from workspace root. No app-local patch map or native build.'
