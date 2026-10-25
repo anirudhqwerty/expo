@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4d4394c7c3e196f40be76d06582963fe870e9727
+          ref: 748e36b
           fetch-depth: 1
           submodules: false
           sparse-checkout: |
@@ -64,15 +64,15 @@ jobs:
           const path = require('node:path');
           const report = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'regression.json'), 'utf8'));
           assert.equal(report.numRuntimeErrorTestSuites, 0);
-          assert.equal(report.numFailedTests, 2);
+          assert.equal(report.numFailedTests, 3);
           assert.equal(report.numPassedTests, 5);
           for (const suite of report.testResults) for (const test of suite.assertionResults) {
             if (test.status === 'failed') {
-              assert.match(test.fullName, /changes the hash when the declared workspace patch changes/);
+              assert.match(test.fullName, /changes the hash when the declared workspace patch changes|hashes patches for native directory sources/);
               assert.match(test.failureMessages.join('\n'), /not\.toBe/);
             }
           }
-          console.log('Verified expected baseline result: 2 failing workspace regressions, 5 passing controls; production code unchanged.');
+          console.log('Verified expected baseline result: 3 failing workspace regressions, 5 passing controls; production code unchanged.');
           NODE
       - uses: actions/upload-artifact@v4
         if: always()
