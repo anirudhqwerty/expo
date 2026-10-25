@@ -1,7 +1,7 @@
 import { vol } from 'memfs';
 import path from 'path';
 
-import type { Options } from '../../Fingerprint.types';
+import type { HashSource, Options } from '../../Fingerprint.types';
 import { normalizeOptionsAsync } from '../../Options';
 import { createFingerprintFromSourcesAsync } from '../../hash/Hash';
 import { getPatchPackageSourcesAsync } from '../PatchPackage';
@@ -29,9 +29,17 @@ function writeFixture(patchPath = 'patches/react-native@0.88.0.patch') {
   });
 }
 
-async function fingerprint(options?: Options) {
+const packageSource: HashSource = {
+  type: 'package',
+  name: 'react-native',
+  version: '0.88.0',
+  filePath: '../node_modules/react-native/package.json',
+  reasons: ['package:react-native'],
+};
+
+async function fingerprint(options?: Options, packageSources: HashSource[] = [packageSource]) {
   const normalized = await normalizeOptionsAsync(projectRoot, options);
-  const sources = await getPatchPackageSourcesAsync(projectRoot, normalized);
+  const sources = await getPatchPackageSourcesAsync(projectRoot, normalized, packageSources);
   return createFingerprintFromSourcesAsync(sources, projectRoot, normalized);
 }
 
@@ -85,6 +93,36 @@ describe('Bun workspace patch fingerprints', () => {
 
     expect(before.sources.some((source) => source.hash != null)).toBe(true);
     expect(after.hash).toBe(before.hash);
+  });
+
+  it('hashes patches for native directory sources, excluding other packages and versions', async () => {
+    writeFixture('native-fixes/react-native.patch');
+    vol.fromJSON({
+      [path.join(workspaceRoot, 'node_modules/react-native/package.json')]: JSON.stringify({
+        name: 'react-native',
+        version: '0.88.0',
+      }),
+      [path.join(workspaceRoot, 'package.json')]: JSON.stringify({
+        workspaces: ['app'],
+        patchedDependencies: {
+          'react-native@0.88.0': 'native-fixes/react-native.patch',
+          'react-native@0.87.0': 'native-fixes/other-version.patch',
+          'sibling-only@1.0.0': 'native-fixes/sibling.patch',
+        },
+      }),
+      [path.join(workspaceRoot, 'native-fixes/other-version.patch')]: 'other version',
+      [path.join(workspaceRoot, 'native-fixes/sibling.patch')]: 'sibling patch',
+    });
+    const sources: HashSource[] = [
+      { type: 'dir', filePath: '../node_modules/react-native/React', reasons: ['autolinking'] },
+    ];
+    const before = await fingerprint(undefined, sources);
+    vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/react-native.patch'), 'revision 2');
+    const after = await fingerprint(undefined, sources);
+    expect(after.hash).not.toBe(before.hash);
+    vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/other-version.patch'), 'other revision');
+    vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/sibling.patch'), 'sibling revision');
+    expect((await fingerprint(undefined, sources)).hash).toBe(after.hash);
   });
 
   it('keeps ignored app-local patch files out of the hash', async () => {
