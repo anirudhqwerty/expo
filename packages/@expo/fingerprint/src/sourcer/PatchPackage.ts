@@ -47,7 +47,9 @@ async function getBunPatchSourcesAsync(
   if (!bunLocks.some(Boolean)) {
     return [];
   }
-  const { patchedDependencies } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+  const { patchedDependencies } = JSON.parse(
+    await fs.readFile(path.join(root, 'package.json'), 'utf8')
+  );
   if (!patchedDependencies || typeof patchedDependencies !== 'object') {
     return [];
   }
@@ -93,7 +95,11 @@ async function getBunPatchSourcesAsync(
     if (dir !== '.') {
       continue;
     }
-    const source = await getFileBasedHashSourceAsync(projectRoot, filePath, 'bun:patchedDependencies');
+    const source = await getFileBasedHashSourceAsync(
+      projectRoot,
+      filePath,
+      'bun:patchedDependencies'
+    );
     if (source) {
       sources.push(source);
     }

@@ -95,6 +95,8 @@ export async function getHashSourcesAsync(
   }
 
   const sources = ([] as HashSource[]).concat(...results);
-  sources.push(...(await profile(options, getPatchPackageSourcesAsync)(projectRoot, options, sources)));
+  sources.push(
+    ...(await profile(options, getPatchPackageSourcesAsync)(projectRoot, options, sources))
+  );
   return sources;
 }

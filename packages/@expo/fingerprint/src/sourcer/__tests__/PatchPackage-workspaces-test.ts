@@ -80,9 +80,11 @@ describe('Bun workspace patch fingerprints', () => {
     writeFixture();
     const packageJson = path.join(workspaceRoot, 'node_modules/react-native/package.json');
     vol.fromJSON({ [packageJson]: JSON.stringify({ name: 'react-native', version: '0.88.0' }) });
-    jest.mocked(resolveFrom.silent).mockImplementation((_, id) =>
-      id === 'react-native/package.json' ? packageJson : undefined
-    );
+    jest
+      .mocked(resolveFrom.silent)
+      .mockImplementation((_, id) =>
+        id === 'react-native/package.json' ? packageJson : undefined
+      );
     const before = await createFingerprintAsync(projectRoot);
     vol.writeFileSync(path.join(workspaceRoot, 'patches/react-native@0.88.0.patch'), 'revision 2');
     const after = await createFingerprintAsync(projectRoot);
@@ -142,7 +144,10 @@ describe('Bun workspace patch fingerprints', () => {
     vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/react-native.patch'), 'revision 2');
     const after = await fingerprint(undefined, sources);
     expect(after.hash).not.toBe(before.hash);
-    vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/other-version.patch'), 'other revision');
+    vol.writeFileSync(
+      path.join(workspaceRoot, 'native-fixes/other-version.patch'),
+      'other revision'
+    );
     vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/sibling.patch'), 'sibling revision');
     expect((await fingerprint(undefined, sources)).hash).toBe(after.hash);
   });
