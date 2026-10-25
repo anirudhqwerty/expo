@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4a015583b255c8d5d56ad54e7be40b09b1c0493b
+          ref: 201ad44de8332136eaf9dd9eaa38e9e7e9743e5e
           fetch-depth: 1
           submodules: false
           sparse-checkout: |
@@ -40,12 +40,19 @@ jobs:
           const path = require('path');
           const root = process.env.GITHUB_WORKSPACE;
           const modules = path.join(process.env.RUNNER_TEMP, 'fingerprint-tools/node_modules');
-          for (const [name, relative] of [['@expo/internal-scripts', 'packages/@expo/internal-scripts'], ['jest-expo', 'packages/jest-expo'], ['expo', 'packages/expo']]) {
+          for (const [name, relative] of [['@expo/internal-scripts', 'packages/@expo/internal-scripts'], ['jest-expo', 'packages/jest-expo'], ['expo', 'packages/expo'], ['@expo/fingerprint', 'packages/@expo/fingerprint']]) {
             fs.symlinkSync(path.join(root, relative), path.join(modules, name), process.platform === 'win32' ? 'junction' : 'dir');
           }
           fs.symlinkSync(modules, path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
           fs.appendFileSync(process.env.GITHUB_PATH, path.join(modules, '.bin') + '\n');
           NODE
+      - name: Build library and CLI
+        if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
+        shell: bash
+        run: |
+          cd packages/@expo/fingerprint
+          node ../internal-scripts/bin/expo-build cjs:src
+          node ../internal-scripts/bin/expo-build --base cli cjs:src
       - name: Unchanged main must fail the regression
         if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
         shell: bash
@@ -57,8 +64,10 @@ jobs:
           set +e
           npm --prefix packages/@expo/fingerprint run test -- --runInBand --json --outputFile "$RUNNER_TEMP/baseline.json" --runTestsByPath src/sourcer/__tests__/PatchPackage-workspaces-test.ts
           result=$?
-          set -e
+          npm --prefix packages/@expo/fingerprint run test -- --runInBand --json --outputFile "$RUNNER_TEMP/baseline-package.json" --testPathIgnorePatterns PatchPackage-workspaces
+          baseline_result=$?
           git restore packages/@expo/fingerprint/src/sourcer/PatchPackage.ts packages/@expo/fingerprint/src/sourcer/Sourcer.ts
+          set -e
           test "$result" -eq 1
           node <<'NODE'
           const assert = require('node:assert/strict');
@@ -80,6 +89,86 @@ jobs:
         if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
         shell: bash
         run: npm --prefix packages/@expo/fingerprint run test -- --runInBand --json --outputFile "$RUNNER_TEMP/package-tests.json"
+      - name: Compare full suite failures against unchanged main
+        if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict'), fs = require('fs'), path = require('path');
+          const read = name => JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, name), 'utf8'));
+          const baseline = read('baseline-package.json'), feature = read('package-tests.json');
+          const failures = report => report.testResults.flatMap(s => s.assertionResults.filter(t => t.status === 'failed').map(t => t.fullName)).sort();
+          assert.equal(baseline.numRuntimeErrorTestSuites, 0);
+          assert.equal(feature.numRuntimeErrorTestSuites, 0);
+          assert.deepEqual(failures(feature), failures(baseline));
+          console.log(JSON.stringify({baseline: {failed: baseline.numFailedTests, passed: baseline.numPassedTests}, feature: {failed: feature.numFailedTests, passed: feature.numPassedTests}, identicalFailures: failures(feature)}, null, 2));
+          NODE
+      - uses: oven-sh/setup-bun@v2
+        if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
+        with:
+          bun-version: '1.4.4'
+      - name: Real Bun workspace patch hash before and after
+        if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
+        shell: bash
+        run: |
+          git show 7f5e6a7cf842d69b336018e07fbcdb098bd9bf7f:packages/@expo/fingerprint/src/sourcer/PatchPackage.ts > "$RUNNER_TEMP/PatchPackage-main.ts"
+          node <<'NODE'
+          const fs = require('fs'), path = require('path'), {transformSync} = require('@swc/core');
+          const source = fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'PatchPackage-main.ts'), 'utf8');
+          fs.writeFileSync('packages/@expo/fingerprint/build/sourcer/PatchPackage-main.js', transformSync(source, {jsc: {parser: {syntax: 'typescript'}, target: 'es2022'}, module: {type: 'commonjs'}}).code);
+          NODE
+          mkdir -p "$RUNNER_TEMP/bun-workspace/app" "$RUNNER_TEMP/bun-workspace/native-fixes"
+          cd "$RUNNER_TEMP/bun-workspace"
+          cat > package.json <<'JSON'
+          {"private":true,"workspaces":["app"],"patchedDependencies":{"is-number@7.0.0":"native-fixes/is-number.patch"}}
+          JSON
+          cat > app/package.json <<'JSON'
+          {"name":"app","private":true,"dependencies":{"is-number":"7.0.0"}}
+          JSON
+          cat > native-fixes/is-number.patch <<'PATCH'
+          diff --git a/fingerprint-marker.cpp b/fingerprint-marker.cpp
+          new file mode 100644
+          index 0000000..eef6440
+          --- /dev/null
+          +++ b/fingerprint-marker.cpp
+          @@ -0,0 +1 @@
+          +int revision = 1;
+          PATCH
+          cat > "$RUNNER_TEMP/bun-proof.cjs" <<'NODE'
+          const assert = require('node:assert/strict'), fs = require('fs'), path = require('path');
+          const base = path.join(process.env.GITHUB_WORKSPACE, 'packages/@expo/fingerprint/build');
+          const {normalizeOptionsAsync} = require(path.join(base, 'Options'));
+          const {getPackageSourceAsync} = require(path.join(base, 'sourcer/Packages'));
+          const {createFingerprintFromSourcesAsync} = require(path.join(base, 'hash/Hash'));
+          (async () => {
+            const root = path.join(process.env.RUNNER_TEMP, 'bun-workspace/app');
+            const options = await normalizeOptionsAsync(root);
+            const pkg = await getPackageSourceAsync(root, {packageName: 'is-number', sourceType: 'package'});
+            assert.ok(pkg);
+            assert.equal(fs.readFileSync(path.join(path.dirname(path.resolve(root, pkg.filePath)), 'fingerprint-marker.cpp'), 'utf8'), `int revision = ${process.argv[2] === 'before' ? 1 : 2};\n`);
+            const hashes = {};
+            for (const [key, name] of [['baseline', 'PatchPackage-main'], ['fixed', 'PatchPackage']]) {
+              const {getPatchPackageSourcesAsync} = require(path.join(base, 'sourcer', name));
+              const sources = await getPatchPackageSourcesAsync(root, options, [pkg]);
+              hashes[key] = (await createFingerprintFromSourcesAsync(sources, root, options)).hash;
+            }
+            const file = path.join(process.env.RUNNER_TEMP, 'bun-proof.json');
+            if (process.argv[2] === 'before') fs.writeFileSync(file, JSON.stringify({before: hashes}, null, 2));
+            else {
+              const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+              assert.equal(hashes.baseline, report.before.baseline);
+              assert.notEqual(hashes.fixed, report.before.fixed);
+              report.after = hashes;
+              fs.writeFileSync(file, JSON.stringify(report, null, 2));
+              console.log(report);
+            }
+          })().catch(error => {console.error(error); process.exitCode = 1;});
+          NODE
+          bun install --ignore-scripts
+          node "$RUNNER_TEMP/bun-proof.cjs" before
+          sed -i 's/int revision = 1;/int revision = 2;/' native-fixes/is-number.patch
+          bun install --force --ignore-scripts
+          node "$RUNNER_TEMP/bun-proof.cjs" after
       - name: Typecheck
         if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
         shell: bash
@@ -94,13 +183,6 @@ jobs:
         run: |
           cd packages/@expo/fingerprint
           node ../internal-scripts/bin/expo-module-depscheck
-      - name: Build library and CLI
-        if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
-        shell: bash
-        run: |
-          cd packages/@expo/fingerprint
-          node ../internal-scripts/bin/expo-build cjs:src
-          node ../internal-scripts/bin/expo-build --base cli cjs:src
       - name: Check formatting
         if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
         shell: bash
@@ -115,6 +197,8 @@ jobs:
           name: verification-${{ matrix.os }}
           include-hidden-files: true
           path: |
+            ${{ runner.temp }}/baseline-package.json
+            ${{ runner.temp }}/bun-proof.json
             ${{ runner.temp }}/baseline.json
             ${{ runner.temp }}/regression.json
             ${{ runner.temp }}/package-tests.json
