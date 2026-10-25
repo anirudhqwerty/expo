@@ -144,6 +144,9 @@ describe('Bun workspace patch fingerprints', () => {
     vol.writeFileSync(path.join(workspaceRoot, 'native-fixes/react-native.patch'), 'revision 2');
     const after = await fingerprint(undefined, sources);
     expect(after.hash).not.toBe(before.hash);
+    expect(
+      (await fingerprint({ ignorePaths: ['../node_modules/react-native/React/'] }, sources)).sources
+    ).toEqual([]);
     vol.writeFileSync(
       path.join(workspaceRoot, 'native-fixes/other-version.patch'),
       'other revision'

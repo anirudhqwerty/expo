@@ -59,7 +59,9 @@ async function getBunPatchSourcesAsync(
   for (const source of packageSources) {
     if (
       source.type === 'contents' ||
-      isIgnoredPathWithMatchObjects(source.filePath, options.ignorePathMatchObjects)
+      isIgnoredPathWithMatchObjects(source.filePath, options.ignorePathMatchObjects) ||
+      (source.type === 'dir' &&
+        isIgnoredPathWithMatchObjects(source.filePath, options.ignoreDirMatchObjects))
     ) {
       continue;
     }
