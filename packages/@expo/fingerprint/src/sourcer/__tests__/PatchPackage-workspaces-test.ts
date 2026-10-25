@@ -1,6 +1,8 @@
 import { vol } from 'memfs';
 import path from 'path';
+import resolveFrom from 'resolve-from';
 
+import { createFingerprintAsync } from '../../Fingerprint';
 import type { HashSource, Options } from '../../Fingerprint.types';
 import { normalizeOptionsAsync } from '../../Options';
 import { createFingerprintFromSourcesAsync } from '../../hash/Hash';
@@ -8,7 +10,10 @@ import { getPatchPackageSourcesAsync } from '../PatchPackage';
 
 jest.mock('fs');
 jest.mock('fs/promises');
+jest.mock('resolve-from');
+jest.mock('@expo/spawn-async');
 jest.mock('../../ProjectWorkflow');
+jest.mock('../../utils/SpawnIPC');
 
 const workspaceRoot = path.resolve('/workspace');
 const projectRoot = path.join(workspaceRoot, 'app');
@@ -52,6 +57,10 @@ describe('Bun workspace patch fingerprints', () => {
     'changes the hash when the declared workspace patch changes: %s',
     async (patchPath) => {
       writeFixture(patchPath);
+      if (patchPath.startsWith('native-fixes/')) {
+        vol.unlinkSync(path.join(workspaceRoot, 'bun.lock'));
+        vol.writeFileSync(path.join(workspaceRoot, 'bun.lockb'), 'binary lock');
+      }
       const before = await fingerprint();
       vol.writeFileSync(path.join(workspaceRoot, patchPath), 'int revision = 2;\n');
       const after = await fingerprint();
@@ -66,6 +75,19 @@ describe('Bun workspace patch fingerprints', () => {
       }
     }
   );
+
+  it('includes workspace patches in the project fingerprint', async () => {
+    writeFixture();
+    const packageJson = path.join(workspaceRoot, 'node_modules/react-native/package.json');
+    vol.fromJSON({ [packageJson]: JSON.stringify({ name: 'react-native', version: '0.88.0' }) });
+    jest.mocked(resolveFrom.silent).mockImplementation((_, id) =>
+      id === 'react-native/package.json' ? packageJson : undefined
+    );
+    const before = await createFingerprintAsync(projectRoot);
+    vol.writeFileSync(path.join(workspaceRoot, 'patches/react-native@0.88.0.patch'), 'revision 2');
+    const after = await createFingerprintAsync(projectRoot);
+    expect(after.hash).not.toBe(before.hash);
+  });
 
   it('continues hashing app-local patch-package files', async () => {
     writeFixture();
@@ -137,7 +159,7 @@ describe('Bun workspace patch fingerprints', () => {
     expect(after.sources).not.toContainEqual(expect.objectContaining({ filePath: 'patches' }));
   });
 
-  it.each(['../patches/**', '**/patches/**'])(
+  it.each(['../patches/**', '**/patches/**', '../patches/'])(
     'does not bypass workspace patch ignores: %s',
     async (ignorePath) => {
       writeFixture();
