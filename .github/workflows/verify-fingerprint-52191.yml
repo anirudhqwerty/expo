@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 748e36b
+          ref: 748e36b5c00ed2d0766eb150b6d0fa4372563a0c
           fetch-depth: 1
           submodules: false
           sparse-checkout: |
