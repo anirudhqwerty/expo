@@ -50,6 +50,7 @@ jobs:
         run: |
           node "$FINGERPRINT_JEST" --config "$FINGERPRINT_JEST_CONFIG" --runInBand --runTestsByPath packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-test.ts packages/@expo/fingerprint/src/hash/__tests__/Hash-test.ts packages/@expo/fingerprint/src/utils/__tests__/Path-test.ts
       - name: Confirm regression fails only for missing workspace patches
+        if: always()
         shell: bash
         run: |
           set +e
@@ -106,8 +107,8 @@ jobs:
           +int revision = 1;
           PATCH
           bun install --ignore-scripts
-          test "$(cat node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 1;'
+          (cd app && bun -e 'const fs = require("fs"), path = require("path"), assert = require("assert/strict"); const file = path.join(path.dirname(require.resolve("is-number/package.json")), "fingerprint-marker.cpp"); console.log(file); assert.equal(fs.readFileSync(file, "utf8"), "int revision = 1;\n");')
           sed -i 's/int revision = 1;/int revision = 2;/' native-fixes/is-number.patch
           bun install --force --ignore-scripts
-          test "$(cat node_modules/is-number/fingerprint-marker.cpp)" = 'int revision = 2;'
+          (cd app && bun -e 'const fs = require("fs"), path = require("path"), assert = require("assert/strict"); const file = path.join(path.dirname(require.resolve("is-number/package.json")), "fingerprint-marker.cpp"); console.log(file); assert.equal(fs.readFileSync(file, "utf8"), "int revision = 2;\n");')
           echo 'Bun 1.4.4 applied both root-declared patch revisions from workspace root. No app-local patch map or native build.'
