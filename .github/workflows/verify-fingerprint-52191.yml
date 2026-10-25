@@ -1,35 +1,37 @@
-name: Research Bun workspace patch fingerprints
+name: Verify Bun workspace patch fingerprints
 on:
   push:
     branches: [verify/52191-bun-patches]
 permissions:
   contents: read
 jobs:
-  regression:
+  verify:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 748e36b5c00ed2d0766eb150b6d0fa4372563a0c
+          ref: c6e5f72ede200082d79546ac58e3b6c289b380e6
           fetch-depth: 1
           submodules: false
           sparse-checkout: |
             packages/@expo/fingerprint
             packages/@expo/internal-scripts
             packages/jest-expo/config
+            packages/expo/config
+            .changeset
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install isolated Jest tools on runner only
+      - name: Install isolated package tools on runner only
         shell: bash
         run: |
-          npm install --prefix "$RUNNER_TEMP/fingerprint-tools" --no-audit --no-fund --ignore-scripts jest@30.5.2 memfs@3.6.0 @swc/core@1.15.18 @swc/jest@0.2.39 @swc-contrib/mut-cjs-exports@14.13.0 jest-watch-typeahead@3.0.1 chalk@4.1.2 debug@4.3.4 getenv@2.0.0 glob@13.0.0 ignore@5.3.1 minimatch@10.2.2 resolve-from@5.0.0 semver@7.7.4 @expo/spawn-async@1.8.0 @expo/env @expo/config
-      - name: Use repository Jest preset without monorepo installation
+          npm install --prefix "$RUNNER_TEMP/fingerprint-tools" --no-audit --no-fund --ignore-scripts --legacy-peer-deps jest@30.5.2 memfs@3.6.0 @swc/core@1.15.18 @swc/jest@0.2.39 @swc-contrib/mut-cjs-exports@14.13.0 jest-watch-typeahead@3.0.1 chalk@4.1.2 debug@4.4.3 getenv@2.0.0 glob@13.0.6 ignore@5.3.2 minimatch@10.2.5 resolve-from@5.0.0 resolve-workspace-root@2.0.1 semver@7.7.4 @expo/spawn-async@1.8.0 @expo/env@2.5.3 @expo/config@58.0.8 @expo/require-utils@58.0.4 expo-splash-screen@58.0.11 expo-modules-autolinking@58.0.15 require-from-string@2.0.2 temp-dir@2.0.0 arg@5.0.2 @types/jest@30.0.0 @types/debug@4.1.12 @types/getenv@1.0.3 @types/node@22.20.1 @types/require-from-string@1.2.3 @types/semver@7.7.1 typescript@6.0.3 oxlint@1.79.0 oxlint-config-universe@0.2.0 oxfmt@0.55.0 pnpm@12.2.1 commander@12.1.0
+      - name: Link repository tools and Expo config entrypoint
         shell: bash
         run: |
           node <<'NODE'
@@ -37,78 +39,84 @@ jobs:
           const path = require('path');
           const root = process.env.GITHUB_WORKSPACE;
           const modules = path.join(process.env.RUNNER_TEMP, 'fingerprint-tools/node_modules');
-          fs.mkdirSync(path.join(modules, '@expo'), { recursive: true });
-          for (const [name, relative] of [['@expo/internal-scripts', 'packages/@expo/internal-scripts'], ['jest-expo', 'packages/jest-expo']]) {
+          for (const [name, relative] of [['@expo/internal-scripts', 'packages/@expo/internal-scripts'], ['jest-expo', 'packages/jest-expo'], ['expo', 'packages/expo']]) {
             fs.symlinkSync(path.join(root, relative), path.join(modules, name), process.platform === 'win32' ? 'junction' : 'dir');
           }
-          const config = path.join(process.env.RUNNER_TEMP, 'fingerprint-jest.cjs');
-          fs.writeFileSync(config, `module.exports = { ...require(${JSON.stringify(path.join(root, 'packages/@expo/fingerprint/jest.config.js'))}), modulePaths: [${JSON.stringify(modules)}] };`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `NODE_PATH=${modules}\nFINGERPRINT_JEST_CONFIG=${config}\nFINGERPRINT_JEST=${path.join(modules, 'jest/bin/jest.js')}\n`);
+          fs.symlinkSync(modules, path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+          fs.appendFileSync(process.env.GITHUB_PATH, path.join(modules, '.bin') + '\n');
           NODE
-      - name: Existing patch, hash and path controls
+      - name: Unchanged main must fail the regression
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          node "$FINGERPRINT_JEST" --config "$FINGERPRINT_JEST_CONFIG" --runInBand --runTestsByPath packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-test.ts packages/@expo/fingerprint/src/hash/__tests__/Hash-test.ts packages/@expo/fingerprint/src/utils/__tests__/Path-test.ts
-      - name: Confirm regression fails only for missing workspace patches
-        if: always()
-        shell: bash
-        run: |
+          git fetch --depth=1 origin 7f5e6a7cf842d69b336018e07fbcdb098bd9bf7f
+          for file in PatchPackage.ts Sourcer.ts; do
+            git show 7f5e6a7cf842d69b336018e07fbcdb098bd9bf7f:packages/@expo/fingerprint/src/sourcer/$file > packages/@expo/fingerprint/src/sourcer/$file
+          done
           set +e
-          node "$FINGERPRINT_JEST" --config "$FINGERPRINT_JEST_CONFIG" --runInBand --json --outputFile "$RUNNER_TEMP/regression.json" --runTestsByPath packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-workspaces-test.ts
+          pnpm --dir packages/@expo/fingerprint test --runInBand --json --outputFile "$RUNNER_TEMP/baseline.json" --runTestsByPath src/sourcer/__tests__/PatchPackage-workspaces-test.ts
           result=$?
           set -e
+          git restore packages/@expo/fingerprint/src/sourcer/PatchPackage.ts packages/@expo/fingerprint/src/sourcer/Sourcer.ts
           test "$result" -eq 1
           node <<'NODE'
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
           const path = require('node:path');
-          const report = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'regression.json'), 'utf8'));
+          const report = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'baseline.json'), 'utf8'));
           assert.equal(report.numRuntimeErrorTestSuites, 0);
-          assert.equal(report.numFailedTests, 3);
-          assert.equal(report.numPassedTests, 5);
+          assert.equal(report.numFailedTests, 4);
+          assert.equal(report.numPassedTests, 6);
           for (const suite of report.testResults) for (const test of suite.assertionResults) {
-            if (test.status === 'failed') {
-              assert.match(test.fullName, /changes the hash when the declared workspace patch changes|hashes patches for native directory sources/);
-              assert.match(test.failureMessages.join('\n'), /not\.toBe/);
-            }
+            if (test.status === 'failed') assert.match(test.failureMessages.join('\n'), /not\.toBe/);
           }
-          console.log('Verified expected baseline result: 3 failing workspace regressions, 5 passing controls; production code unchanged.');
           NODE
+      - name: Fixed workspace regression
+        shell: bash
+        run: pnpm --dir packages/@expo/fingerprint test --runInBand --json --outputFile "$RUNNER_TEMP/regression.json" --runTestsByPath src/sourcer/__tests__/PatchPackage-workspaces-test.ts
+      - name: Full package unit tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: pnpm --dir packages/@expo/fingerprint test --runInBand --json --outputFile "$RUNNER_TEMP/package-tests.json"
+      - name: Typecheck
+        if: runner.os == 'Linux'
+        shell: bash
+        run: pnpm --dir packages/@expo/fingerprint typecheck
+      - name: Lint
+        if: runner.os == 'Linux'
+        shell: bash
+        run: pnpm --dir packages/@expo/fingerprint lint
+      - name: Package dependency boundaries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd packages/@expo/fingerprint
+          node ../internal-scripts/bin/expo-module-depscheck
+      - name: Build library and CLI
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd packages/@expo/fingerprint
+          node ../internal-scripts/bin/expo-build cjs:src
+          node ../internal-scripts/bin/expo-build --base cli cjs:src
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: oxfmt --check packages/@expo/fingerprint/src/sourcer/PatchPackage.ts packages/@expo/fingerprint/src/sourcer/Sourcer.ts packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-workspaces-test.ts packages/@expo/fingerprint/package.json .changeset/fingerprint-bun-workspace-patches.md
+      - name: Collect formatting corrections if necessary
+        if: failure() && runner.os == 'Linux'
+        shell: bash
+        run: oxfmt --write packages/@expo/fingerprint/src/sourcer/PatchPackage.ts packages/@expo/fingerprint/src/sourcer/Sourcer.ts packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-workspaces-test.ts .changeset/fingerprint-bun-workspace-patches.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: regression-${{ matrix.os }}
-          path: ${{ runner.temp }}/regression.json
-  bun-resolution:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    steps:
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.4.4'
-      - name: Prove Bun root patch resolution without an SDK app
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/bun-workspace/app" "$RUNNER_TEMP/bun-workspace/native-fixes"
-          cd "$RUNNER_TEMP/bun-workspace"
-          cat > package.json <<'JSON'
-          {"private":true,"workspaces":["app"],"patchedDependencies":{"is-number@7.0.0":"native-fixes/is-number.patch"}}
-          JSON
-          cat > app/package.json <<'JSON'
-          {"name":"app","private":true,"dependencies":{"is-number":"7.0.0"}}
-          JSON
-          cat > native-fixes/is-number.patch <<'PATCH'
-          diff --git a/fingerprint-marker.cpp b/fingerprint-marker.cpp
-          new file mode 100644
-          index 0000000..eef6440
-          --- /dev/null
-          +++ b/fingerprint-marker.cpp
-          @@ -0,0 +1 @@
-          +int revision = 1;
-          PATCH
-          bun install --ignore-scripts
-          (cd app && bun -e 'const fs = require("fs"), path = require("path"), assert = require("assert/strict"); const file = path.join(path.dirname(require.resolve("is-number/package.json")), "fingerprint-marker.cpp"); console.log(file); assert.equal(fs.readFileSync(file, "utf8"), "int revision = 1;\n");')
-          sed -i 's/int revision = 1;/int revision = 2;/' native-fixes/is-number.patch
-          bun install --force --ignore-scripts
-          (cd app && bun -e 'const fs = require("fs"), path = require("path"), assert = require("assert/strict"); const file = path.join(path.dirname(require.resolve("is-number/package.json")), "fingerprint-marker.cpp"); console.log(file); assert.equal(fs.readFileSync(file, "utf8"), "int revision = 2;\n");')
-          echo 'Bun 1.4.4 applied both root-declared patch revisions from workspace root. No app-local patch map or native build.'
+          name: verification-${{ matrix.os }}
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/baseline.json
+            ${{ runner.temp }}/regression.json
+            ${{ runner.temp }}/package-tests.json
+            packages/@expo/fingerprint/src/sourcer/PatchPackage.ts
+            packages/@expo/fingerprint/src/sourcer/Sourcer.ts
+            packages/@expo/fingerprint/src/sourcer/__tests__/PatchPackage-workspaces-test.ts
+            .changeset/fingerprint-bun-workspace-patches.md
