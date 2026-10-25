@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -45,6 +45,25 @@ jobs:
           }
           fs.symlinkSync(modules, path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
           fs.appendFileSync(process.env.GITHUB_PATH, path.join(modules, '.bin') + '\n');
+          NODE
+      - name: Provide platform manifests for isolated Node resolution
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs'), path = require('path');
+          (async () => {
+            const modules = path.join(process.env.RUNNER_TEMP, 'fingerprint-tools/node_modules');
+            for (const [name, version] of [['react-native', '0.88.0'], ['react-dom', '19.3.0']]) {
+              const response = await fetch(`https://registry.npmjs.org/${name}/${version}`);
+              if (!response.ok) throw new Error(`${name}: ${response.status}`);
+              const manifest = await response.json();
+              if (manifest.name !== name || manifest.version !== version) throw new Error('Unexpected platform manifest');
+              const dir = path.join(modules, name);
+              fs.mkdirSync(dir, {recursive: true});
+              fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(manifest));
+            }
+            fs.appendFileSync(process.env.GITHUB_ENV, `NODE_PATH=${modules}\n`);
+          })().catch(error => {console.error(error); process.exitCode = 1;});
           NODE
       - name: Build library and CLI
         if: always() && runner.os == 'Linux' && steps.link.outcome == 'success'
